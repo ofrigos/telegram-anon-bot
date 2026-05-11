@@ -5,12 +5,11 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # ===== НАСТРОЙКИ (ЗАМЕНИТЕ НА СВОИ) =====
-TOKEN = "8643886201:AAEuWxq3kjq_5Vb_AIAd62CEIzzvRXZ9I-0"              # Токен от @BotFather
-ADMIN_ID = 8117717482             # Ваш ID от @userinfobot
-BOT_USERNAME = "anonimofrigo_bot"  # Username бота (без @)
+TOKEN = "8643886201:AAEuWxq3kjq_5Vb_AIAd62CEIzzvRXZ9I-0"
+ADMIN_ID = 8117717482
+BOT_USERNAME = "anonimofrigo_bot"
 # =========================================
 
-# Файлы для хранения данных
 LINKS_FILE = "user_links.json"
 DIALOGS_FILE = "active_dialogs.json"
 USERS_FILE = "all_users.json"
@@ -25,25 +24,20 @@ def save_json(filename, data):
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-# Загружаем данные
 user_links = load_json(LINKS_FILE)
 dialogs = load_json(DIALOGS_FILE)
 all_users = load_json(USERS_FILE)
 admin_reply_buffer = {}
-
-# ==================== КОМАНДЫ ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     first_name = update.effective_user.first_name
     args = context.args
 
-    # Сохраняем пользователя
     if user_id not in all_users:
         all_users[user_id] = first_name
         save_json(USERS_FILE, all_users)
 
-    # Если перешли по ссылке для вопроса
     if args and args[0].startswith("ask_"):
         token = args[0][4:]
         target = None
@@ -51,19 +45,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if t == token:
                 target = uid
                 break
+        
+        if target == user_id:
+            await update.message.reply_text(
+                "🤡 *Нельзя задать вопрос самому себе!*\n\n"
+                "Вы перешли по своей собственной ссылке.\n\n"
+                "Отправьте эту ссылку другому человеку, "
+                "чтобы он мог задать вам вопрос.\n\n"
+                "👇 Вот ваша ссылка ещё раз:\n"
+                f"`https://t.me/{BOT_USERNAME}?start=ask_{token}`",
+                parse_mode="Markdown"
+            )
+            return
+        
         if target:
             context.user_data["reply_to"] = target
             await update.message.reply_text(
                 "🤫 *Анонимный вопрос*\n\n"
                 "Напишите ваше сообщение. Администратор получит его анонимно.\n\n"
-                "📌 Ответ придёт в этот же чат.",
+                "Ответ придёт в этот же чат.",
                 parse_mode="Markdown"
             )
         else:
             await update.message.reply_text("❌ Ссылка недействительна или устарела.")
         return
 
-    # Генерируем ссылку для пользователя
     if user_id not in user_links:
         user_links[user_id] = secrets.token_urlsafe(16)
         save_json(LINKS_FILE, user_links)
@@ -71,7 +77,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     token = user_links[user_id]
     link = f"https://t.me/{BOT_USERNAME}?start=ask_{token}"
 
-    # Красивое приветствие
     welcome_text = (
         f"👋 *Привет, {first_name}!*\n\n"
         f"Я бот для анонимных вопросов и ответов.\n\n"
@@ -81,9 +86,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Отправь ссылку кому угодно\n"
         f"• Человек задаст вопрос анонимно\n"
         f"• Ты получишь уведомление с кнопкой «Ответить»\n\n"
-        f"🤫 *Полная анонимность*\n"
-        f"• Твой ID и username не видны\n"
-        f"• Ответы тоже приходят анонимно\n\n"
+        f"⚠️ *Важно:* Не переходи по своей собственной ссылке\n\n"
         f"📊 *Команды:*\n"
         f"/start — показать ссылку\n"
         f"/info — о боте\n"
@@ -102,19 +105,17 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info_text = (
         "ℹ️ *О боте*\n\n"
         "🤫 *Анонимный бот для вопросов*\n"
-        "Позволяет получать вопросы от任何人都 анонимно.\n\n"
+        "Позволяет получать вопросы анонимно.\n\n"
         "📌 *Возможности:*\n"
         "• Персональная ссылка для каждого\n"
         "• Анонимные вопросы\n"
         "• Ответы через удобную кнопку\n"
-        "• Никто не видит твой ID\n\n"
-        "🛠 *Технологии:*\n"
-        "• Python + python-telegram-bot\n"
-        "• Хостинг на Render.com\n\n"
+        "• Никто не видит твой ID\n"
+        "• Защита от самовопросов\n\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         "👨‍💻 *Создатель:* @Ofrigo\n"
         "⭐ *Поддержать:* не обязательно, но приятно\n\n"
-        "_Бот создан с любовью и трудом_ ❤️"
+        "❤️ *Бот создан с любовью и трудом*"
     )
     await update.message.reply_text(info_text, parse_mode="Markdown")
 
@@ -133,6 +134,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "1. Нажми кнопку «Ответить» под вопросом\n"
         "2. Напиши ответ\n"
         "3. Ответ уйдёт анонимно\n\n"
+        "⚠️ *Важно:* Нельзя задать вопрос самому себе\n\n"
         "📌 *Команды:*\n"
         "/start — получить ссылку\n"
         "/info — о боте\n"
@@ -143,7 +145,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-
     if user_id != str(ADMIN_ID):
         await update.message.reply_text("⛔ У вас нет прав для этой команды.")
         return
@@ -153,14 +154,13 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "📢 *Как отправить рассылку:*\n\n"
             "`/broadcast Текст сообщения`\n\n"
-            "Пример:\n`/broadcast Всем привет! Бот обновлён.`",
+            "Пример:\n`/broadcast Всем привет!`",
             parse_mode="Markdown"
         )
         return
 
     message_text = " ".join(args)
     start_msg = await update.message.reply_text("📨 Начинаю рассылку...")
-
     sent = 0
     failed = 0
 
@@ -168,7 +168,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=int(uid),
-                text=f"📢 *Массовое уведомление:*\n\n{message_text}",
+                text=f"📢 *Уведомление:*\n\n{message_text}",
                 parse_mode="Markdown"
             )
             sent += 1
@@ -185,7 +185,6 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-
     if user_id != str(ADMIN_ID):
         await update.message.reply_text("⛔ Нет прав.")
         return
@@ -198,18 +197,14 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ==================== ОСНОВНАЯ ЛОГИКА ====================
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sender_id = str(update.effective_user.id)
     text = update.message.text
 
-    # Сохраняем пользователя
     if sender_id not in all_users:
         all_users[sender_id] = update.effective_user.first_name
         save_json(USERS_FILE, all_users)
 
-    # Если есть активный диалог
     if sender_id in dialogs:
         target_id = dialogs[sender_id]
         await context.bot.send_message(
@@ -220,52 +215,46 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Ответ отправлен.")
         return
 
-    # Если новый вопрос через ссылку
     if "reply_to" in context.user_data:
         target_id = context.user_data["reply_to"]
-
         dialogs[sender_id] = target_id
         dialogs[target_id] = sender_id
         save_json(DIALOGS_FILE, dialogs)
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✍️ Ответить на вопрос", callback_data=f"answer_{sender_id}")]
+            [InlineKeyboardButton("✍️ Ответить", callback_data=f"answer_{sender_id}")]
         ])
 
         await context.bot.send_message(
             chat_id=int(target_id),
-            text=f"🤫 *Новый анонимный вопрос:*\n\n{text}",
+            text=f"🤫 *Новый вопрос:*\n\n{text}",
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
-        await update.message.reply_text("✅ Вопрос отправлен анонимно.")
+        await update.message.reply_text("✅ Вопрос отправлен.")
         del context.user_data["reply_to"]
         return
 
-    # Если ничего из вышеперечисленного
     await update.message.reply_text(
-        "📩 Отправьте /start, чтобы получить свою ссылку для анонимных вопросов."
+        "📩 Отправьте /start, чтобы получить свою ссылку."
     )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     data = query.data
     user_id = str(update.effective_user.id)
 
     if data.startswith("answer_"):
         questioner_id = data.split("_")[1]
         admin_reply_buffer[user_id] = questioner_id
-
         await query.edit_message_text(
-            text=query.message.text + "\n\n✏️ *Напишите ваш ответ ниже:*",
+            text=query.message.text + "\n\n✏️ *Напишите ответ:*",
             parse_mode="Markdown"
         )
-
         await context.bot.send_message(
             chat_id=user_id,
-            text="💬 Введите текст ответа. Он будет отправлен анонимно."
+            text="💬 Введите текст ответа."
         )
 
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -274,14 +263,12 @@ async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user_id in admin_reply_buffer:
         questioner_id = admin_reply_buffer[user_id]
-
         await context.bot.send_message(
             chat_id=int(questioner_id),
             text=f"✉️ *Ответ:*\n\n{text}",
             parse_mode="Markdown"
         )
-
-        await update.message.reply_text("✅ Ответ отправлен анонимно.")
+        await update.message.reply_text("✅ Ответ отправлен.")
         del admin_reply_buffer[user_id]
     elif user_id == str(ADMIN_ID) and user_id in dialogs:
         target_id = dialogs[user_id]
@@ -292,11 +279,8 @@ async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text("✅ Отправлено.")
 
-# ==================== ЗАПУСК ====================
-
 def main():
     app = Application.builder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("info", info_command))
     app.add_handler(CommandHandler("help", help_command))
@@ -305,8 +289,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & filters.Chat(ADMIN_ID), admin_reply))
-
-    print("🤫 Анонимный бот успешно запущен!")
+    print("🤫 Анонимный бот запущен!")
     app.run_polling()
 
 if __name__ == "__main__":
