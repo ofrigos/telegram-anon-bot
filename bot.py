@@ -4,13 +4,12 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-TOKEN = "8903396597:AAEI3buQrnojm-k4ltqz3uZ3IdDiP6zakAk"
-ADMIN_ID = 8117717482
+TOKEN = "ВАШ_ТОКЕН"
+ADMIN_ID = 123456789
 
 # ========== ДАННЫЕ ==========
 WAITING_LIST = []
 ACTIVE_CHATS = {}
-SUPPORT_MODE = {}  # {user_id: True} - пользователь в режиме поддержки
 REPORTS_FILE = "reports.json"
 BLACKLIST_FILE = "blacklist.json"
 CHATS_FILE = "chats.json"
@@ -44,7 +43,7 @@ load_data()
 def get_main_keyboard():
     return ReplyKeyboardMarkup([
         ["🔍 Найти собеседника", "🚪 Завершить чат"],
-        ["❓ Помощь", "📞 Поддержка"]
+        ["❓ Помощь"]
     ], resize_keyboard=True)
 
 def get_chat_keyboard():
@@ -67,18 +66,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤫 *Анонимный чат 1 на 1*\n\n"
         "• Нажми «🔍 Найти собеседника»\n"
         "• Общайся анонимно\n"
-        "• Нажми «📞 Поддержка» если проблема"
+        "• По всем вопросам: @Ofrigo"
     )
     
     await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    user_id = str(update.effective_user.id)
-    
-    # Выходим из режима поддержки если был
-    if user_id in SUPPORT_MODE:
-        del SUPPORT_MODE[user_id]
     
     if "🔍 Найти собеседника" in text:
         await find(update, context)
@@ -86,8 +80,6 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await stop(update, context)
     elif "❓ Помощь" in text:
         await help_command(update, context)
-    elif "📞 Поддержка" in text:
-        await contact_admin(update, context)
 
 async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -156,97 +148,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❓ *Помощь*\n\n"
         "• «🔍 Найти собеседника» — начать поиск\n"
         "• «🚪 Завершить чат» — выйти из диалога\n"
-        "• «📞 Поддержка» — написать администратору\n\n"
+        "• 🔥 Предложить контакт — отправить свой username\n"
+        "• ⚠️ Пожаловаться — на нарушителя\n\n"
         "📌 *Правила:*\n"
-        "• Запрещены оскорбления\n"
-        "• После 3 жалоб — блокировка"
+        "• Запрещены оскорбления и 18+\n"
+        "• После 3 жалоб — блокировка\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "📞 *По всем вопросам:* @Ofrigo"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
-
-async def contact_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Включение режима поддержки"""
-    user_id = str(update.effective_user.id)
-    
-    # Включаем режим поддержки
-    SUPPORT_MODE[user_id] = True
-    
-    await update.message.reply_text(
-        "📞 *Режим поддержки*\n\n"
-        "Напишите ваше сообщение. Администратор ответит вам.\n\n"
-        "✏️ *Введите сообщение:*",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard()
-    )
-
-async def handle_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка сообщений в режиме поддержки"""
-    user_id = str(update.effective_user.id)
-    
-    if user_id not in SUPPORT_MODE:
-        return
-    
-    text = update.message.text
-    user_name = update.effective_user.first_name
-    
-    # Отправляем админу
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=f"📞 *ПОДДЕРЖКА*\n\n"
-             f"👤 {user_name}\n"
-             f"🆔 `{user_id}`\n"
-             f"📝 {text}",
-        parse_mode="Markdown"
-    )
-    
-    # Выходим из режима поддержки
-    del SUPPORT_MODE[user_id]
-    
-    await update.message.reply_text(
-        "✅ *Сообщение отправлено!*\n\n"
-        "Администратор ответит вам в этот чат.\n"
-        "Ожидайте...",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard()
-    )
-
-async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ответ администратора пользователю"""
-    if str(update.effective_user.id) != str(ADMIN_ID):
-        return
-    
-    if not update.message.reply_to_message:
-        await update.message.reply_text("⚠️ Нажмите «Ответить» на сообщение пользователя")
-        return
-    
-    original = update.message.reply_to_message
-    reply_text = update.message.text
-    
-    # Ищем ID пользователя в оригинальном сообщении
-    for line in original.text.split("\n"):
-        if "🆔" in line or "ID" in line:
-            # Извлекаем цифры
-            import re
-            numbers = re.findall(r'\d+', line)
-            if numbers:
-                target_id = numbers[0]
-                await context.bot.send_message(
-                    chat_id=int(target_id),
-                    text=f"📞 *Ответ поддержки:*\n\n{reply_text}",
-                    parse_mode="Markdown",
-                    reply_markup=get_main_keyboard()
-                )
-                await update.message.reply_text(f"✅ Ответ отправлен пользователю {target_id}")
-                return
-    
-    await update.message.reply_text("❌ Не удалось найти ID пользователя в сообщении")
 
 async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обычные сообщения в чате"""
     user_id = str(update.effective_user.id)
-    
-    # Если в режиме поддержки — пропускаем
-    if user_id in SUPPORT_MODE:
-        return
     
     # Если в активном чате
     if user_id in ACTIVE_CHATS:
@@ -271,13 +185,12 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 sticker=update.message.sticker.file_id
             )
     else:
-        # Не в чате и не в режиме поддержки
-        if not user_id in SUPPORT_MODE:
-            await update.message.reply_text(
-                "🤫 Нажмите «🔍 Найти собеседника» чтобы начать общение\n\n"
-                "Или «📞 Поддержка» если есть вопрос",
-                reply_markup=get_main_keyboard()
-            )
+        # Не в чате
+        await update.message.reply_text(
+            "🤫 Нажмите «🔍 Найти собеседника» чтобы начать общение\n\n"
+            "По всем вопросам: @Ofrigo",
+            reply_markup=get_main_keyboard()
+        )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -330,6 +243,16 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "adult": "18+"
             }.get(reason_key, "Другое")
             
+            # Сохраняем жалобу
+            reports = load_json("reports.json", [])
+            reports.append({
+                "from": user_id,
+                "on": partner_id,
+                "reason": reason_text,
+                "time": str(datetime.now())
+            })
+            save_json("reports.json", reports)
+            
             await query.edit_message_text(f"⚠️ *Жалоба отправлена!*\nПричина: {reason_text}", parse_mode="Markdown")
     
     elif data == "cancel_report":
@@ -340,8 +263,6 @@ def main():
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_support_message))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_reply))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_chat_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
