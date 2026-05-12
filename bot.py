@@ -37,8 +37,7 @@ def get_chat_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤫 *Анонимный чат*\n\n• Найди собеседника\n• Общайся анонимно\n• Предложи контакт если хочешь",
-        parse_mode="Markdown",
+        "🤫 Анонимный чат\n\n• Найди собеседника\n• Общайся анонимно",
         reply_markup=get_main_keyboard()
     )
 
@@ -50,20 +49,13 @@ async def handle_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = update.message.text
 
-    # ПОМОЩЬ
     if text == "❓ Помощь":
         await update.message.reply_text(
-            "❓ *Помощь*\n\n"
-            "• «🔍 Найти собеседника» — начать поиск\n"
-            "• «🚪 Завершить чат» — выйти из диалога\n"
-            "• 🔥 Предложить контакт — отправить свой username\n\n"
-            "📞 По вопросам: @Ofrigo",
-            parse_mode="Markdown",
+            "❓ Помощь\n\n• Найти собеседника\n• Завершить чат\n• Предложить контакт\n\nПо вопросам: @Ofrigo",
             reply_markup=get_main_keyboard()
         )
         return
 
-    # НАЙТИ СОБЕСЕДНИКА
     if text == "🔍 Найти собеседника":
         if user_id in ACTIVE_CHATS:
             await update.message.reply_text("❌ Вы уже в чате.")
@@ -87,7 +79,6 @@ async def handle_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(int(u2), "✅ Собеседник найден!", reply_markup=get_chat_keyboard())
         return
 
-    # ЗАВЕРШИТЬ ЧАТ
     if text == "🚪 Завершить чат":
         if user_id in WAITING_LIST:
             WAITING_LIST.remove(user_id)
@@ -109,7 +100,7 @@ async def handle_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Вы не в чате.")
         return
 
-    # ОБЫЧНОЕ СООБЩЕНИЕ
+    # Обычное сообщение или фото/стикер
     if user_id in ACTIVE_CHATS:
         partner = ACTIVE_CHATS[user_id]
         try:
@@ -119,13 +110,12 @@ async def handle_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_photo(int(partner), update.message.photo[-1].file_id)
             elif update.message.sticker:
                 await context.bot.send_sticker(int(partner), update.message.sticker.file_id)
+            elif update.message.document:
+                await context.bot.send_document(int(partner), update.message.document.file_id)
         except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {e}")
+            print(f"Ошибка: {e}")
     else:
-        await update.message.reply_text(
-            "🤫 Нажмите «🔍 Найти собеседника»",
-            reply_markup=get_main_keyboard()
-        )
+        await update.message.reply_text("Нажми «🔍 Найти собеседника»", reply_markup=get_main_keyboard())
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -133,31 +123,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     data = query.data
     
-    # Запрос на отправку контакта
     if data == "request_contact":
         if user_id not in ACTIVE_CHATS:
             await query.edit_message_text("❌ Вы не в чате.")
             return
         
-        # Показываем подтверждение
-        confirm_keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ Да, отправить", callback_data="confirm_contact"),
-                InlineKeyboardButton("❌ Нет, отмена", callback_data="cancel_contact")
-            ]
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Да", callback_data="confirm_contact"), InlineKeyboardButton("❌ Нет", callback_data="cancel_contact")]
         ])
         
-        await query.edit_message_text(
-            "⚠️ *Внимание!*\n\n"
-            "Вы собираетесь отправить свой username собеседнику.\n"
-            "После этого он сможет написать вам в личные сообщения.\n\n"
-            "*Отправить username?*",
-            reply_markup=confirm_keyboard,
-            parse_mode="Markdown"
-        )
+        await query.edit_message_text("⚠️ Отправить свой username собеседнику?\n\nОн сможет написать вам в личные сообщения.", reply_markup=keyboard)
         return
     
-    # Подтверждение отправки
     if data == "confirm_contact":
         if user_id not in ACTIVE_CHATS:
             await query.edit_message_text("❌ Вы не в чате.")
@@ -167,27 +144,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         username = update.effective_user.username
         
         if username:
-            await context.bot.send_message(
-                int(partner),
-                f"🔥 *Собеседник хочет поделиться контактом!*\n\n👤 @{username}",
-                parse_mode="Markdown"
-            )
-            await query.edit_message_text("✅ Username отправлен собеседнику!")
+            await context.bot.send_message(int(partner), f"🔥 Собеседник поделился контактом: @{username}")
+            await query.edit_message_text("✅ Username отправлен!")
         else:
             await query.edit_message_text("❌ У вас нет username. Установите его в настройках Telegram.")
         return
     
-    # Отмена
     if data == "cancel_contact":
-        await query.edit_message_text("❌ Отправка отменена.")
+        await query.edit_message_text("❌ Отменено.")
 
 def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.STICKER, handle_all))
+    app.add_handler(MessageHandler(filters.TEXT, handle_all))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_all))
+    app.add_handler(MessageHandler(filters.Sticker.ALL, handle_all))  # Правильный способ для стикеров
     app.add_handler(CallbackQueryHandler(button_callback))
-    print("🤫 Анонимный чат с подтверждением контакта запущен!")
+    
+    print("🤫 Анонимный чат запущен!")
     app.run_polling()
 
 if __name__ == "__main__":
