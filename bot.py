@@ -1,268 +1,258 @@
 import json
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 TOKEN = "8903396597:AAEI3buQrnojm-k4ltqz3uZ3IdDiP6zakAk"
-ADMIN_ID = 8117717482
+ADMIN_ID = 8117717482  # ТВОЙ ID (скрыт от пользователей)
 
+# ========== ДАННЫЕ ==========
 WAITING_LIST = []
 ACTIVE_CHATS = {}
+ADMIN_REPLY_BUFFER = {}
 REPORTS_FILE = "reports.json"
+BLACKLIST_FILE = "blacklist.json"
+CHATS_FILE = "chats.json"
 
-def save_data():
-    with open("chats.json", "w") as f:
-        json.dump({"waiting": WAITING_LIST, "active": ACTIVE_CHATS}, f)
+REPORT_REASONS = {
+    "insult": "😤 Мат / Оскорбления",
+    "spam": "📨 Спам / Реклама",
+    "adult": "🔞 18+ контент",
+    "other": "❓ Другое"
+}
+
+def load_json(file, default):
+    if os.path.exists(file):
+        with open(file, 'r') as f:
+            return json.load(f)
+    return default
+
+def save_json(file, data):
+    with open(file, 'w') as f:
+        json.dump(data, f, indent=2)
 
 def load_data():
     global WAITING_LIST, ACTIVE_CHATS
-    if os.path.exists("chats.json"):
-        with open("chats.json", "r") as f:
-            data = json.load(f)
-            WAITING_LIST = data.get("waiting", [])
-            ACTIVE_CHATS = data.get("active", {})
+    data = load_json(CHATS_FILE, {"waiting": [], "active": {}})
+    WAITING_LIST = data.get("waiting", [])
+    ACTIVE_CHATS = data.get("active", {})
+
+def save_data():
+    save_json(CHATS_FILE, {"waiting": WAITING_LIST, "active": ACTIVE_CHATS})
 
 def load_reports():
-    if os.path.exists(REPORTS_FILE):
-        with open(REPORTS_FILE, "r") as f:
-            return json.load(f)
-    return []
+    return load_json(REPORTS_FILE, [])
 
 def save_reports(reports):
-    with open(REPORTS_FILE, "w") as f:
-        json.dump(reports, f, indent=2)
+    save_json(REPORTS_FILE, reports)
+
+def load_blacklist():
+    return load_json(BLACKLIST_FILE, [])
+
+def save_blacklist(blacklist):
+    save_json(BLACKLIST_FILE, blacklist)
 
 load_data()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤫 *Анонимный чат 1 на 1*\n\n"
-        "• /find — найти собеседника\n"
-        "• /stop — завершить диалог\n"
-        "• /skip — найти нового\n"
-        "• Во время чата доступны кнопки:\n"
-        "   🔥 — запросить контакт\n"
-        "   ⚠️ — пожаловаться\n\n"
-        "Вы никому не покажете свой ID или имя.",
-        parse_mode="Markdown"
-    )
+# ========== КЛАВИАТУРЫ ==========
 
-async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def get_main_keyboard():
+    return ReplyKeyboardMarkup([
+        ["🔍 Найти собеседника", "🚪 Завершить чат"],
+        ["❓ Помощь", "📞 Поддержка"]
+    ], resize_keyboard=True)
+
+def get_chat_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔥 Предложить контакт", callback_data="request_contact")],
+        [InlineKeyboardButton("⚠️ Пожаловаться", callback_data="report_start")]
+    ])
+
+def get_report_keyboard(partner_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(REPORT_REASONS["insult"], callback_data=f"report_reason_insult_{partner_id}")],
+        [InlineKeyboardButton(REPORT_REASONS["spam"], callback_data=f"report_reason_spam_{partner_id}")],
+        [InlineKeyboardButton(REPORT_REASONS["adult"], callback_data=f"report_reason_adult_{partner_id}")],
+        [InlineKeyboardButton(REPORT_REASONS["other"], callback_data=f"report_reason_other_{partner_id}")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_report")]
+    ])
+
+# ========== КОМАНДЫ ==========
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = str(user.id)
-
-    if user_id in ACTIVE_CHATS:
-        await update.message.reply_text("❌ Вы уже в чате. Напишите /stop, чтобы выйти.")
+    
+    if user_id in load_blacklist():
+        await update.message.reply_text("🚫 Вы заблокированы за нарушение правил.")
         return
+    
+    welcome_text = (
+        f"✨ *Привет, {user.first_name}!* ✨\n\n"
+        "🤫 *Анонимный чат 1 на 1*\n"
+        "Общайся с незнакомцами, не раскрывая личности.\n\n"
+        "🔹 *Как пользоваться:*\n"
+        "• Нажми «🔍 Найти собеседника»\n"
+        "• Жди пока кто-то подключится\n"
+        "• Общайся анонимно\n\n"
+        "📞 *Есть проблема?* Нажми «Поддержка»\n\n"
+        "━━━━━━━━━━━━━━━━━━━"
+    )
+    
+    await update.message.reply_text(
+        welcome_text,
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
+    )
 
+async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    user_id = str(update.effective_user.id)
+    
+    if "🔍 Найти собеседника" in text:
+        await find(update, context)
+    elif "🚪 Завершить чат" in text:
+        await stop(update, context)
+    elif "❓ Помощь" in text:
+        await help_command(update, context)
+    elif "📞 Поддержка" in text:
+        await contact_admin(update, context)
+
+async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    
+    if user_id in load_blacklist():
+        await update.message.reply_text("🚫 Вы заблокированы.")
+        return
+    
+    if user_id in ACTIVE_CHATS:
+        await update.message.reply_text("❌ Вы уже в чате. Нажмите «🚪 Завершить чат».")
+        return
+    
     if user_id in WAITING_LIST:
         await update.message.reply_text("⏳ Вы уже в очереди. Ожидайте...")
         return
-
+    
     WAITING_LIST.append(user_id)
     save_data()
-    await update.message.reply_text("🔍 Ищем собеседника... /stop — отменить.")
-
+    await update.message.reply_text("🔍 *Ищем собеседника...*", parse_mode="Markdown")
+    
     if len(WAITING_LIST) >= 2:
         user1 = WAITING_LIST.pop(0)
         user2 = WAITING_LIST.pop(0)
-
+        
         ACTIVE_CHATS[user1] = user2
         ACTIVE_CHATS[user2] = user1
         save_data()
-
-        # Кнопки для чата
-        chat_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔥 Предложить контакт", callback_data="request_contact")],
-            [InlineKeyboardButton("⚠️ Пожаловаться", callback_data="report")]
-        ])
-
+        
         for uid in [user1, user2]:
             await context.bot.send_message(
                 chat_id=int(uid),
-                text="✅ *Собеседник найден!*\n\nМожете общаться анонимно.\n/stop — завершить чат.\n\n👇 Кнопки помощи:",
-                reply_markup=chat_keyboard,
+                text="✅ *Собеседник найден!*\n\nМожете общаться анонимно.\n/stop — завершить чат.\n👇 Кнопки под сообщениями:",
+                reply_markup=get_chat_keyboard(),
                 parse_mode="Markdown"
             )
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-
+    
     if user_id in WAITING_LIST:
         WAITING_LIST.remove(user_id)
         save_data()
-        await update.message.reply_text("❌ Поиск отменён.")
+        await update.message.reply_text("❌ Поиск отменён.", reply_markup=get_main_keyboard())
         return
-
+    
     if user_id in ACTIVE_CHATS:
         partner_id = ACTIVE_CHATS[user_id]
-
         del ACTIVE_CHATS[user_id]
         if partner_id in ACTIVE_CHATS:
             del ACTIVE_CHATS[partner_id]
         save_data()
-
+        
         await context.bot.send_message(
             chat_id=int(partner_id),
-            text="🚪 *Собеседник покинул чат.*\n/find — найти нового.",
+            text="🚪 *Собеседник покинул чат.*\nНажмите «🔍 Найти собеседника».",
+            reply_markup=get_main_keyboard(),
             parse_mode="Markdown"
         )
-        await update.message.reply_text("🚪 Чат завершён. /find — найти нового.")
+        await update.message.reply_text("🚪 *Чат завершён.*", reply_markup=get_main_keyboard(), parse_mode="Markdown")
         return
+    
+    await update.message.reply_text("❌ Вы не в чате.", reply_markup=get_main_keyboard())
 
-    await update.message.reply_text("❌ Вы не в чате. /find — начать поиск.")
-
-async def skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-
-    if user_id not in ACTIVE_CHATS:
-        await update.message.reply_text("❌ Вы не в чате.")
-        return
-
-    partner_id = ACTIVE_CHATS[user_id]
-
-    del ACTIVE_CHATS[user_id]
-    if partner_id in ACTIVE_CHATS:
-        del ACTIVE_CHATS[partner_id]
-
-    await context.bot.send_message(
-        chat_id=int(partner_id),
-        text="🚪 *Собеседник ищет нового.*\n/find — найти нового.",
-        parse_mode="Markdown"
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "❓ *Помощь по боту*\n\n"
+        "🔹 *Как начать:*\n"
+        "• Нажми «🔍 Найти собеседника»\n"
+        "• Ожидай подключения\n"
+        "• Общайся анонимно\n\n"
+        "🔹 *Во время чата:*\n"
+        "• 🔥 Предложить контакт — отправить свой username\n"
+        "• ⚠️ Пожаловаться — на нарушителя\n\n"
+        "🔹 *Проблемы:*\n"
+        "• Нажми «📞 Поддержка» — напишешь напрямую администратору\n\n"
+        "📌 *Правила:*\n"
+        "• Запрещены оскорбления и 18+\n"
+        "• После 3 жалоб — блокировка"
     )
+    await update.message.reply_text(help_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
-    WAITING_LIST.append(user_id)
-    save_data()
-    await update.message.reply_text("🔍 Ищем нового собеседника...")
-
-    if len(WAITING_LIST) >= 2:
-        user1 = WAITING_LIST.pop(0)
-        user2 = WAITING_LIST.pop(0)
-
-        ACTIVE_CHATS[user1] = user2
-        ACTIVE_CHATS[user2] = user1
-        save_data()
-
-        chat_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔥 Предложить контакт", callback_data="request_contact")],
-            [InlineKeyboardButton("⚠️ Пожаловаться", callback_data="report")]
-        ])
-
-        for uid in [user1, user2]:
-            await context.bot.send_message(
-                chat_id=int(uid),
-                text="✅ *Новый собеседник найден!*",
-                reply_markup=chat_keyboard,
-                parse_mode="Markdown"
-            )
-
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+async def contact_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Связь с администратором"""
     user_id = str(update.effective_user.id)
-    data = query.data
-
-    if user_id not in ACTIVE_CHATS:
-        await query.edit_message_text("❌ Вы не в активном чате.")
-        return
-
-    partner_id = ACTIVE_CHATS[user_id]
-
-    if data == "request_contact":
-        # Запрос на обмен контактами
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ Да, хочу ЛС", callback_data="accept_contact"),
-                InlineKeyboardButton("❌ Нет", callback_data="decline_contact")
-            ]
-        ])
-
-        await context.bot.send_message(
-            chat_id=int(partner_id),
-            text="🔥 *Собеседник хочет обменяться контактами!*\n\n"
-                 "Если согласны — нажмите кнопку. Ваш username будет отправлен.\n"
-                 "Если нет — просто проигнорируйте.",
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
-        await query.edit_message_text("✅ Запрос на обмен контактами отправлен собеседнику.")
-
-    elif data == "accept_contact":
-        # Собеседник согласился — отправляем username
-        sender = update.effective_user
-        username = sender.username if sender.username else "скрыт"
-
-        # Отправляем username тому, кто запросил
-        partner = None
-        for uid, pid in ACTIVE_CHATS.items():
-            if pid == user_id:
-                partner = uid
-                break
-
-        if partner:
-            await context.bot.send_message(
-                chat_id=int(partner),
-                text=f"🔥 *Собеседник согласился на обмен!*\n\n"
-                     f"👤 Его username: @{username}\n\n"
-                     f"Можете написать ему в личные сообщения.",
-                parse_mode="Markdown"
-            )
-            await query.edit_message_text(
-                "✅ Вы согласились на обмен контактами.\n"
-                "Ваш username отправлен собеседнику."
-            )
-
-    elif data == "decline_contact":
-        # Отказ
-        partner = None
-        for uid, pid in ACTIVE_CHATS.items():
-            if pid == user_id:
-                partner = uid
-                break
-
-        if partner:
-            await context.bot.send_message(
-                chat_id=int(partner),
-                text="❌ *Собеседник отказался обмениваться контактами.*",
-                parse_mode="Markdown"
-            )
-        await query.edit_message_text("❌ Вы отказались от обмена контактами.")
-
-    elif data == "report":
-        # Жалоба на собеседника
-        reports = load_reports()
-        reports.append({
-            "from_user": user_id,
-            "on_user": partner_id,
-            "reason": "Не указана",
-            "time": str(update.effective_message.date)
-        })
-        save_reports(reports)
-
-        # Уведомление админу
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"⚠️ *НОВАЯ ЖАЛОБА!*\n\n"
-                 f"От: {user_id}\n"
-                 f"На: {partner_id}\n"
-                 f"Время: {update.effective_message.date}\n\n"
-                 f"Всего жалоб: {len(reports)}",
-            parse_mode="Markdown"
-        )
-
-        await query.edit_message_text(
-            "⚠️ *Жалоба отправлена администратору.*\n"
-            "Если собеседник нарушает правила — он будет заблокирован.\n\n"
-            "Спасибо за бдительность! 🤝",
-            parse_mode="Markdown"
-        )
+    
+    ADMIN_REPLY_BUFFER[user_id] = True
+    
+    await update.message.reply_text(
+        "📞 *Связь с поддержкой*\n\n"
+        "Напишите ваше сообщение. Администратор получит его и ответит вам как можно скорее.\n\n"
+        "Вы можете задать вопрос, пожаловаться на баг или предложить идею.\n\n"
+        "✏️ *Введите ваше сообщение:*",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
+    )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-
+    
+    # Если пользователь в режиме связи с админом
+    if user_id in ADMIN_REPLY_BUFFER:
+        text = update.message.text
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"📞 *Сообщение от пользователя*\n\n"
+                 f"👤 Имя: {update.effective_user.first_name}\n"
+                 f"🆔 ID: {user_id}\n"
+                 f"📝 Сообщение:\n{text}\n\n"
+                 f"✏️ Чтобы ответить — просто ответьте на это сообщение (Reply)",
+            parse_mode="Markdown"
+        )
+        del ADMIN_REPLY_BUFFER[user_id]
+        await update.message.reply_text("✅ Сообщение отправлено администратору. Ответ придёт сюда.", reply_markup=get_main_keyboard())
+        return
+    
+    # Если админ отвечает пользователю
+    if user_id == str(ADMIN_ID) and update.message.reply_to_message:
+        reply_text = update.message.text
+        original = update.message.reply_to_message
+        if original and "ID:" in original.text:
+            for line in original.text.split("\n"):
+                if "🆔 ID:" in line:
+                    target_id = line.split("🆔 ID:")[1].strip()
+                    await context.bot.send_message(
+                        chat_id=int(target_id),
+                        text=f"📞 *Ответ поддержки:*\n\n{reply_text}",
+                        parse_mode="Markdown"
+                    )
+                    await update.message.reply_text("✅ Ответ отправлен пользователю.")
+                    return
+    
+    # Если пользователь в активном чате
     if user_id in ACTIVE_CHATS:
         partner_id = ACTIVE_CHATS[user_id]
-
+        
         if update.message.text:
             await context.bot.send_message(
                 chat_id=int(partner_id),
@@ -270,85 +260,122 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
         elif update.message.photo:
-            photo = update.message.photo[-1].file_id
-            await context.bot.send_photo(
+            await context.bot.send_message(
                 chat_id=int(partner_id),
-                photo=photo,
-                caption="📸 *Аноним отправил фото*",
+                text="📸 *Аноним отправил фото*",
                 parse_mode="Markdown"
             )
+            await context.bot.send_photo(
+                chat_id=int(partner_id),
+                photo=update.message.photo[-1].file_id
+            )
         elif update.message.sticker:
+            await context.bot.send_message(
+                chat_id=int(partner_id),
+                text="🎭 *Аноним отправил стикер*",
+                parse_mode="Markdown"
+            )
             await context.bot.send_sticker(
                 chat_id=int(partner_id),
                 sticker=update.message.sticker.file_id
             )
     else:
         await update.message.reply_text(
-            "🤫 Чтобы начать общение, напишите /find\n\n"
-            "Пока вы ни с кем не связаны."
+            "🤫 Чтобы начать общение, нажмите «🔍 Найти собеседника»\n\n"
+            "📞 Есть вопрос? Нажмите «Поддержка»",
+            reply_markup=get_main_keyboard()
         )
 
-async def report_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     user_id = str(update.effective_user.id)
-    if user_id != str(ADMIN_ID):
-        await update.message.reply_text("⛔ Нет прав.")
-        return
-
-    reports = load_reports()
-    if not reports:
-        await update.message.reply_text("📭 Жалоб пока нет.")
-        return
-
-    text = "⚠️ *Список жалоб:*\n\n"
-    for i, r in enumerate(reports[-10:], 1):
-        text += f"{i}. От: {r['from_user']}\n   На: {r['on_user']}\n   Время: {r['time']}\n\n"
-
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-async def block_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    if user_id != str(ADMIN_ID):
-        await update.message.reply_text("⛔ Нет прав.")
-        return
-
-    args = context.args
-    if not args:
-        await update.message.reply_text("Использование: /block USER_ID")
-        return
-
-    target_id = args[0]
-    # Добавляем в чёрный список
-    blacklist = load_blacklist()
-    if target_id not in blacklist:
-        blacklist.append(target_id)
-        save_blacklist(blacklist)
-        await update.message.reply_text(f"✅ Пользователь {target_id} заблокирован.")
-    else:
-        await update.message.reply_text(f"⚠️ Пользователь уже в чёрном списке.")
-
-def load_blacklist():
-    if os.path.exists("blacklist.json"):
-        with open("blacklist.json", "r") as f:
-            return json.load(f)
-    return []
-
-def save_blacklist(blacklist):
-    with open("blacklist.json", "w") as f:
-        json.dump(blacklist, f)
+    data = query.data
+    
+    if data == "request_contact":
+        if user_id not in ACTIVE_CHATS:
+            await query.edit_message_text("❌ Вы не в чате.")
+            return
+        
+        partner_id = ACTIVE_CHATS[user_id]
+        username = update.effective_user.username
+        
+        if username:
+            await context.bot.send_message(
+                chat_id=int(partner_id),
+                text=f"🔥 *Собеседник хочет поделиться контактом!*\n\n"
+                     f"👤 Его username: @{username}\n\n"
+                     f"Можете написать ему в личные сообщения.",
+                parse_mode="Markdown"
+            )
+            await query.edit_message_text("✅ Ваш username отправлен собеседнику.")
+        else:
+            await query.edit_message_text("❌ У вас нет username. Установите его в настройках Telegram.")
+    
+    elif data == "report_start":
+        if user_id not in ACTIVE_CHATS:
+            await query.edit_message_text("❌ Вы не в чате.")
+            return
+        
+        partner_id = ACTIVE_CHATS[user_id]
+        keyboard = get_report_keyboard(partner_id)
+        await query.edit_message_text(
+            "⚠️ *Пожаловаться на собеседника*\n\nВыберите причину:",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+    
+    elif data.startswith("report_reason_"):
+        parts = data.split("_")
+        if len(parts) >= 5:
+            reason_key = parts[3]
+            partner_id = parts[4]
+            reason_text = REPORT_REASONS.get(reason_key, "Неизвестно")
+            
+            reports = load_reports()
+            reports.append({
+                "from_user": user_id,
+                "on_user": partner_id,
+                "reason": reason_text,
+                "time": str(datetime.now())
+            })
+            save_reports(reports)
+            
+            blacklist = load_blacklist()
+            user_complaints = [r for r in reports if r["on_user"] == partner_id]
+            
+            if len(user_complaints) >= 3 and partner_id not in blacklist:
+                blacklist.append(partner_id)
+                save_blacklist(blacklist)
+            
+            await query.edit_message_text(
+                f"⚠️ *Жалоба отправлена!*\n\n"
+                f"Причина: {reason_text}\n"
+                f"Жалоб на этого пользователя: {len(user_complaints)}/3\n\n"
+                f"Спасибо за помощь в модерации! 🤝",
+                parse_mode="Markdown"
+            )
+            
+            # Завершаем диалог после жалобы
+            if user_id in ACTIVE_CHATS:
+                partner = ACTIVE_CHATS[user_id]
+                del ACTIVE_CHATS[user_id]
+                if partner in ACTIVE_CHATS:
+                    del ACTIVE_CHATS[partner]
+                save_data()
+    
+    elif data == "cancel_report":
+        await query.edit_message_text("❌ Жалоба отменена.", reply_markup=None)
 
 def main():
     app = Application.builder().token(TOKEN).build()
-
+    
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("find", find))
-    app.add_handler(CommandHandler("stop", stop))
-    app.add_handler(CommandHandler("skip", skip))
-    app.add_handler(CommandHandler("reports", report_list))
-    app.add_handler(CommandHandler("block", block_user))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_button))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
-
-    print("🤫 Анонимный чат 1 на 1 с жалобами и обменом контактами запущен!")
+    
+    print("🤫 Анонимный чат 1 на 1 запущен!")
     app.run_polling()
 
 if __name__ == "__main__":
