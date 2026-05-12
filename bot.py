@@ -1,295 +1,354 @@
 import json
 import os
-import secrets
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-# ===== НАСТРОЙКИ (ЗАМЕНИТЕ НА СВОИ) =====
-TOKEN = "8643886201:AAEuWxq3kjq_5Vb_AIAd62CEIzzvRXZ9I-0"
+TOKEN = "8903396597:AAEI3buQrnojm-k4ltqz3uZ3IdDiP6zakAk"
 ADMIN_ID = 8117717482
-BOT_USERNAME = "anonimofrigo_bot"
-# =========================================
 
-LINKS_FILE = "user_links.json"
-DIALOGS_FILE = "active_dialogs.json"
-USERS_FILE = "all_users.json"
+WAITING_LIST = []
+ACTIVE_CHATS = {}
+REPORTS_FILE = "reports.json"
 
-def load_json(filename):
-    if os.path.exists(filename):
-        with open(filename, 'r', encoding='utf-8') as f:
+def save_data():
+    with open("chats.json", "w") as f:
+        json.dump({"waiting": WAITING_LIST, "active": ACTIVE_CHATS}, f)
+
+def load_data():
+    global WAITING_LIST, ACTIVE_CHATS
+    if os.path.exists("chats.json"):
+        with open("chats.json", "r") as f:
+            data = json.load(f)
+            WAITING_LIST = data.get("waiting", [])
+            ACTIVE_CHATS = data.get("active", {})
+
+def load_reports():
+    if os.path.exists(REPORTS_FILE):
+        with open(REPORTS_FILE, "r") as f:
             return json.load(f)
-    return {}
+    return []
 
-def save_json(filename, data):
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+def save_reports(reports):
+    with open(REPORTS_FILE, "w") as f:
+        json.dump(reports, f, indent=2)
 
-user_links = load_json(LINKS_FILE)
-dialogs = load_json(DIALOGS_FILE)
-all_users = load_json(USERS_FILE)
-admin_reply_buffer = {}
+load_data()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    first_name = update.effective_user.first_name
-    args = context.args
-
-    if user_id not in all_users:
-        all_users[user_id] = first_name
-        save_json(USERS_FILE, all_users)
-
-    if args and args[0].startswith("ask_"):
-        token = args[0][4:]
-        target = None
-        for uid, t in user_links.items():
-            if t == token:
-                target = uid
-                break
-        
-        if target == user_id:
-            await update.message.reply_text(
-                "🤡 *Нельзя задать вопрос самому себе!*\n\n"
-                "Вы перешли по своей собственной ссылке.\n\n"
-                "Отправьте эту ссылку другому человеку, "
-                "чтобы он мог задать вам вопрос.\n\n"
-                "👇 Вот ваша ссылка ещё раз:\n"
-                f"`https://t.me/{BOT_USERNAME}?start=ask_{token}`",
-                parse_mode="Markdown"
-            )
-            return
-        
-        if target:
-            context.user_data["reply_to"] = target
-            await update.message.reply_text(
-                "🤫 *Анонимный вопрос*\n\n"
-                "Напишите ваше сообщение. Администратор получит его анонимно.\n\n"
-                "Ответ придёт в этот же чат.",
-                parse_mode="Markdown"
-            )
-        else:
-            await update.message.reply_text("❌ Ссылка недействительна или устарела.")
-        return
-
-    if user_id not in user_links:
-        user_links[user_id] = secrets.token_urlsafe(16)
-        save_json(LINKS_FILE, user_links)
-
-    token = user_links[user_id]
-    link = f"https://t.me/{BOT_USERNAME}?start=ask_{token}"
-
-    welcome_text = (
-        f"👋 *Привет, {first_name}!*\n\n"
-        f"Я бот для анонимных вопросов и ответов.\n\n"
-        f"🔗 *Твоя персональная ссылка:*\n"
-        f"`{link}`\n\n"
-        f"📤 *Как использовать:*\n"
-        f"• Отправь ссылку кому угодно\n"
-        f"• Человек задаст вопрос анонимно\n"
-        f"• Ты получишь уведомление с кнопкой «Ответить»\n\n"
-        f"⚠️ *Важно:* Не переходи по своей собственной ссылке\n\n"
-        f"📊 *Команды:*\n"
-        f"/start — показать ссылку\n"
-        f"/info — о боте\n"
-        f"/help — помощь\n\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        f"👨‍💻 *Создатель:* @Ofrigo"
-    )
-
     await update.message.reply_text(
-        welcome_text,
-        parse_mode="Markdown",
-        disable_web_page_preview=True
-    )
-
-async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    info_text = (
-        "ℹ️ *О боте*\n\n"
-        "🤫 *Анонимный бот для вопросов*\n"
-        "Позволяет получать вопросы анонимно.\n\n"
-        "📌 *Возможности:*\n"
-        "• Персональная ссылка для каждого\n"
-        "• Анонимные вопросы\n"
-        "• Ответы через удобную кнопку\n"
-        "• Никто не видит твой ID\n"
-        "• Защита от самовопросов\n\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        "👨‍💻 *Создатель:* @Ofrigo\n"
-        "⭐ *Поддержать:* не обязательно, но приятно\n\n"
-        "❤️ *Бот создан с любовью и трудом*"
-    )
-    await update.message.reply_text(info_text, parse_mode="Markdown")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "❓ *Как пользоваться ботом*\n\n"
-        "🔹 *Для получения вопросов:*\n"
-        "1. Отправь /start\n"
-        "2. Скопируй свою ссылку\n"
-        "3. Отправь ссылку друзьям\n\n"
-        "🔹 *Чтобы задать вопрос:*\n"
-        "1. Перейди по ссылке друга\n"
-        "2. Напиши сообщение\n"
-        "3. Друг получит вопрос анонимно\n\n"
-        "🔹 *Чтобы ответить:*\n"
-        "1. Нажми кнопку «Ответить» под вопросом\n"
-        "2. Напиши ответ\n"
-        "3. Ответ уйдёт анонимно\n\n"
-        "⚠️ *Важно:* Нельзя задать вопрос самому себе\n\n"
-        "📌 *Команды:*\n"
-        "/start — получить ссылку\n"
-        "/info — о боте\n"
-        "/help — эта справка\n\n"
-        "👨‍💻 *Создатель:* @Ofrigo"
-    )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
-
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    if user_id != str(ADMIN_ID):
-        await update.message.reply_text("⛔ У вас нет прав для этой команды.")
-        return
-
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "📢 *Как отправить рассылку:*\n\n"
-            "`/broadcast Текст сообщения`\n\n"
-            "Пример:\n`/broadcast Всем привет!`",
-            parse_mode="Markdown"
-        )
-        return
-
-    message_text = " ".join(args)
-    start_msg = await update.message.reply_text("📨 Начинаю рассылку...")
-    sent = 0
-    failed = 0
-
-    for uid, name in all_users.items():
-        try:
-            await context.bot.send_message(
-                chat_id=int(uid),
-                text=f"📢 *Уведомление:*\n\n{message_text}",
-                parse_mode="Markdown"
-            )
-            sent += 1
-        except Exception:
-            failed += 1
-
-    await start_msg.edit_text(
-        f"✅ *Рассылка завершена!*\n\n"
-        f"📨 Отправлено: {sent}\n"
-        f"❌ Ошибок: {failed}\n"
-        f"👥 Всего пользователей: {len(all_users)}",
+        "🤫 *Анонимный чат 1 на 1*\n\n"
+        "• /find — найти собеседника\n"
+        "• /stop — завершить диалог\n"
+        "• /skip — найти нового\n"
+        "• Во время чата доступны кнопки:\n"
+        "   🔥 — запросить контакт\n"
+        "   ⚠️ — пожаловаться\n\n"
+        "Вы никому не покажете свой ID или имя.",
         parse_mode="Markdown"
     )
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = str(user.id)
+
+    if user_id in ACTIVE_CHATS:
+        await update.message.reply_text("❌ Вы уже в чате. Напишите /stop, чтобы выйти.")
+        return
+
+    if user_id in WAITING_LIST:
+        await update.message.reply_text("⏳ Вы уже в очереди. Ожидайте...")
+        return
+
+    WAITING_LIST.append(user_id)
+    save_data()
+    await update.message.reply_text("🔍 Ищем собеседника... /stop — отменить.")
+
+    if len(WAITING_LIST) >= 2:
+        user1 = WAITING_LIST.pop(0)
+        user2 = WAITING_LIST.pop(0)
+
+        ACTIVE_CHATS[user1] = user2
+        ACTIVE_CHATS[user2] = user1
+        save_data()
+
+        # Кнопки для чата
+        chat_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔥 Предложить контакт", callback_data="request_contact")],
+            [InlineKeyboardButton("⚠️ Пожаловаться", callback_data="report")]
+        ])
+
+        for uid in [user1, user2]:
+            await context.bot.send_message(
+                chat_id=int(uid),
+                text="✅ *Собеседник найден!*\n\nМожете общаться анонимно.\n/stop — завершить чат.\n\n👇 Кнопки помощи:",
+                reply_markup=chat_keyboard,
+                parse_mode="Markdown"
+            )
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+
+    if user_id in WAITING_LIST:
+        WAITING_LIST.remove(user_id)
+        save_data()
+        await update.message.reply_text("❌ Поиск отменён.")
+        return
+
+    if user_id in ACTIVE_CHATS:
+        partner_id = ACTIVE_CHATS[user_id]
+
+        del ACTIVE_CHATS[user_id]
+        if partner_id in ACTIVE_CHATS:
+            del ACTIVE_CHATS[partner_id]
+        save_data()
+
+        await context.bot.send_message(
+            chat_id=int(partner_id),
+            text="🚪 *Собеседник покинул чат.*\n/find — найти нового.",
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text("🚪 Чат завершён. /find — найти нового.")
+        return
+
+    await update.message.reply_text("❌ Вы не в чате. /find — начать поиск.")
+
+async def skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+
+    if user_id not in ACTIVE_CHATS:
+        await update.message.reply_text("❌ Вы не в чате.")
+        return
+
+    partner_id = ACTIVE_CHATS[user_id]
+
+    del ACTIVE_CHATS[user_id]
+    if partner_id in ACTIVE_CHATS:
+        del ACTIVE_CHATS[partner_id]
+
+    await context.bot.send_message(
+        chat_id=int(partner_id),
+        text="🚪 *Собеседник ищет нового.*\n/find — найти нового.",
+        parse_mode="Markdown"
+    )
+
+    WAITING_LIST.append(user_id)
+    save_data()
+    await update.message.reply_text("🔍 Ищем нового собеседника...")
+
+    if len(WAITING_LIST) >= 2:
+        user1 = WAITING_LIST.pop(0)
+        user2 = WAITING_LIST.pop(0)
+
+        ACTIVE_CHATS[user1] = user2
+        ACTIVE_CHATS[user2] = user1
+        save_data()
+
+        chat_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔥 Предложить контакт", callback_data="request_contact")],
+            [InlineKeyboardButton("⚠️ Пожаловаться", callback_data="report")]
+        ])
+
+        for uid in [user1, user2]:
+            await context.bot.send_message(
+                chat_id=int(uid),
+                text="✅ *Новый собеседник найден!*",
+                reply_markup=chat_keyboard,
+                parse_mode="Markdown"
+            )
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = str(update.effective_user.id)
+    data = query.data
+
+    if user_id not in ACTIVE_CHATS:
+        await query.edit_message_text("❌ Вы не в активном чате.")
+        return
+
+    partner_id = ACTIVE_CHATS[user_id]
+
+    if data == "request_contact":
+        # Запрос на обмен контактами
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Да, хочу ЛС", callback_data="accept_contact"),
+                InlineKeyboardButton("❌ Нет", callback_data="decline_contact")
+            ]
+        ])
+
+        await context.bot.send_message(
+            chat_id=int(partner_id),
+            text="🔥 *Собеседник хочет обменяться контактами!*\n\n"
+                 "Если согласны — нажмите кнопку. Ваш username будет отправлен.\n"
+                 "Если нет — просто проигнорируйте.",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        await query.edit_message_text("✅ Запрос на обмен контактами отправлен собеседнику.")
+
+    elif data == "accept_contact":
+        # Собеседник согласился — отправляем username
+        sender = update.effective_user
+        username = sender.username if sender.username else "скрыт"
+
+        # Отправляем username тому, кто запросил
+        partner = None
+        for uid, pid in ACTIVE_CHATS.items():
+            if pid == user_id:
+                partner = uid
+                break
+
+        if partner:
+            await context.bot.send_message(
+                chat_id=int(partner),
+                text=f"🔥 *Собеседник согласился на обмен!*\n\n"
+                     f"👤 Его username: @{username}\n\n"
+                     f"Можете написать ему в личные сообщения.",
+                parse_mode="Markdown"
+            )
+            await query.edit_message_text(
+                "✅ Вы согласились на обмен контактами.\n"
+                "Ваш username отправлен собеседнику."
+            )
+
+    elif data == "decline_contact":
+        # Отказ
+        partner = None
+        for uid, pid in ACTIVE_CHATS.items():
+            if pid == user_id:
+                partner = uid
+                break
+
+        if partner:
+            await context.bot.send_message(
+                chat_id=int(partner),
+                text="❌ *Собеседник отказался обмениваться контактами.*",
+                parse_mode="Markdown"
+            )
+        await query.edit_message_text("❌ Вы отказались от обмена контактами.")
+
+    elif data == "report":
+        # Жалоба на собеседника
+        reports = load_reports()
+        reports.append({
+            "from_user": user_id,
+            "on_user": partner_id,
+            "reason": "Не указана",
+            "time": str(update.effective_message.date)
+        })
+        save_reports(reports)
+
+        # Уведомление админу
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"⚠️ *НОВАЯ ЖАЛОБА!*\n\n"
+                 f"От: {user_id}\n"
+                 f"На: {partner_id}\n"
+                 f"Время: {update.effective_message.date}\n\n"
+                 f"Всего жалоб: {len(reports)}",
+            parse_mode="Markdown"
+        )
+
+        await query.edit_message_text(
+            "⚠️ *Жалоба отправлена администратору.*\n"
+            "Если собеседник нарушает правила — он будет заблокирован.\n\n"
+            "Спасибо за бдительность! 🤝",
+            parse_mode="Markdown"
+        )
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+
+    if user_id in ACTIVE_CHATS:
+        partner_id = ACTIVE_CHATS[user_id]
+
+        if update.message.text:
+            await context.bot.send_message(
+                chat_id=int(partner_id),
+                text=f"💬 *Аноним:* {update.message.text}",
+                parse_mode="Markdown"
+            )
+        elif update.message.photo:
+            photo = update.message.photo[-1].file_id
+            await context.bot.send_photo(
+                chat_id=int(partner_id),
+                photo=photo,
+                caption="📸 *Аноним отправил фото*",
+                parse_mode="Markdown"
+            )
+        elif update.message.sticker:
+            await context.bot.send_sticker(
+                chat_id=int(partner_id),
+                sticker=update.message.sticker.file_id
+            )
+    else:
+        await update.message.reply_text(
+            "🤫 Чтобы начать общение, напишите /find\n\n"
+            "Пока вы ни с кем не связаны."
+        )
+
+async def report_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if user_id != str(ADMIN_ID):
         await update.message.reply_text("⛔ Нет прав.")
         return
 
-    await update.message.reply_text(
-        f"📊 *Статистика бота:*\n\n"
-        f"👥 Всего пользователей: {len(all_users)}\n"
-        f"🔗 Активных ссылок: {len(user_links)}\n"
-        f"💬 Активных диалогов: {len(dialogs)//2}",
-        parse_mode="Markdown"
-    )
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    sender_id = str(update.effective_user.id)
-    text = update.message.text
-
-    if sender_id not in all_users:
-        all_users[sender_id] = update.effective_user.first_name
-        save_json(USERS_FILE, all_users)
-
-    if sender_id in dialogs:
-        target_id = dialogs[sender_id]
-        await context.bot.send_message(
-            chat_id=int(target_id),
-            text=f"✉️ *Ответ:*\n\n{text}",
-            parse_mode="Markdown"
-        )
-        await update.message.reply_text("✅ Ответ отправлен.")
+    reports = load_reports()
+    if not reports:
+        await update.message.reply_text("📭 Жалоб пока нет.")
         return
 
-    if "reply_to" in context.user_data:
-        target_id = context.user_data["reply_to"]
-        dialogs[sender_id] = target_id
-        dialogs[target_id] = sender_id
-        save_json(DIALOGS_FILE, dialogs)
+    text = "⚠️ *Список жалоб:*\n\n"
+    for i, r in enumerate(reports[-10:], 1):
+        text += f"{i}. От: {r['from_user']}\n   На: {r['on_user']}\n   Время: {r['time']}\n\n"
 
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✍️ Ответить", callback_data=f"answer_{sender_id}")]
-        ])
+    await update.message.reply_text(text, parse_mode="Markdown")
 
-        await context.bot.send_message(
-            chat_id=int(target_id),
-            text=f"🤫 *Новый вопрос:*\n\n{text}",
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
-        await update.message.reply_text("✅ Вопрос отправлен.")
-        del context.user_data["reply_to"]
+async def block_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    if user_id != str(ADMIN_ID):
+        await update.message.reply_text("⛔ Нет прав.")
         return
 
-    await update.message.reply_text(
-        "📩 Отправьте /start, чтобы получить свою ссылку."
-    )
+    args = context.args
+    if not args:
+        await update.message.reply_text("Использование: /block USER_ID")
+        return
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    user_id = str(update.effective_user.id)
+    target_id = args[0]
+    # Добавляем в чёрный список
+    blacklist = load_blacklist()
+    if target_id not in blacklist:
+        blacklist.append(target_id)
+        save_blacklist(blacklist)
+        await update.message.reply_text(f"✅ Пользователь {target_id} заблокирован.")
+    else:
+        await update.message.reply_text(f"⚠️ Пользователь уже в чёрном списке.")
 
-    if data.startswith("answer_"):
-        questioner_id = data.split("_")[1]
-        admin_reply_buffer[user_id] = questioner_id
-        await query.edit_message_text(
-            text=query.message.text + "\n\n✏️ *Напишите ответ:*",
-            parse_mode="Markdown"
-        )
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="💬 Введите текст ответа."
-        )
+def load_blacklist():
+    if os.path.exists("blacklist.json"):
+        with open("blacklist.json", "r") as f:
+            return json.load(f)
+    return []
 
-async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    text = update.message.text
-
-    if user_id in admin_reply_buffer:
-        questioner_id = admin_reply_buffer[user_id]
-        await context.bot.send_message(
-            chat_id=int(questioner_id),
-            text=f"✉️ *Ответ:*\n\n{text}",
-            parse_mode="Markdown"
-        )
-        await update.message.reply_text("✅ Ответ отправлен.")
-        del admin_reply_buffer[user_id]
-    elif user_id == str(ADMIN_ID) and user_id in dialogs:
-        target_id = dialogs[user_id]
-        await context.bot.send_message(
-            chat_id=int(target_id),
-            text=f"✉️ *Сообщение:*\n\n{text}",
-            parse_mode="Markdown"
-        )
-        await update.message.reply_text("✅ Отправлено.")
+def save_blacklist(blacklist):
+    with open("blacklist.json", "w") as f:
+        json.dump(blacklist, f)
 
 def main():
     app = Application.builder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("info", info_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CommandHandler("find", find))
+    app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(CommandHandler("skip", skip))
+    app.add_handler(CommandHandler("reports", report_list))
+    app.add_handler(CommandHandler("block", block_user))
     app.add_handler(CallbackQueryHandler(button_callback))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Chat(ADMIN_ID), admin_reply))
-    print("🤫 Анонимный бот запущен!")
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
+
+    print("🤫 Анонимный чат 1 на 1 с жалобами и обменом контактами запущен!")
     app.run_polling()
 
 if __name__ == "__main__":
