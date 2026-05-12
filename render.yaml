@@ -1,6 +1,11 @@
 services:
   - type: web
-    name: telegram-bot
+    name: anonymous-chat
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
+    envVars:
+      - key: TOKEN
+        sync: false
+      - key: ADMIN_ID
+        sync: false
