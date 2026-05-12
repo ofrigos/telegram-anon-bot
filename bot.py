@@ -4,8 +4,8 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-TOKEN = "ВАШ_ТОКЕН"
-ADMIN_ID = 123456789
+TOKEN = "8903396597:AAEI3buQrnojm-k4ltqz3uZ3IdDiP6zakAk"
+ADMIN_ID = 8117717482
 
 # ========== ДАННЫЕ ==========
 WAITING_LIST = []
