@@ -1,6 +1,5 @@
 import json
 import os
-import re
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -11,7 +10,6 @@ ADMIN_ID = 8117717482
 # ========== ДАННЫЕ ==========
 WAITING_LIST = []
 ACTIVE_CHATS = {}
-ADMIN_REPLY_BUFFER = {}
 REPORTS_FILE = "reports.json"
 BLACKLIST_FILE = "blacklist.json"
 CHATS_FILE = "chats.json"
@@ -74,16 +72,14 @@ def get_chat_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    user_id = str(user.id)
     
-    if user_id in load_blacklist():
+    if str(user.id) in load_blacklist():
         await update.message.reply_text("🚫 Вы заблокированы.")
         return
     
     welcome_text = (
         f"✨ *Привет, {user.first_name}!* ✨\n\n"
-        "🤫 *Анонимный чат 1 на 1*\n"
-        "Общайся с незнакомцами, не раскрывая личности.\n\n"
+        "🤫 *Анонимный чат 1 на 1*\n\n"
         "🔹 *Как пользоваться:*\n"
         "• Нажми «🔍 Найти собеседника»\n"
         "• Жди пока кто-то подключится\n"
@@ -91,11 +87,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📞 *Есть проблема?* Нажми «Поддержка»"
     )
     
-    await update.message.reply_text(
-        welcome_text,
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard()
-    )
+    await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -139,7 +131,7 @@ async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for uid in [user1, user2]:
             await context.bot.send_message(
                 chat_id=int(uid),
-                text="✅ *Собеседник найден!*\n\nМожете общаться анонимно.\n\n👇 Кнопки под сообщениями:",
+                text="✅ *Собеседник найден!*\n\nМожете общаться анонимно.",
                 reply_markup=get_chat_keyboard(),
                 parse_mode="Markdown"
             )
@@ -173,39 +165,39 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "❓ *Помощь по боту*\n\n"
-        "🔹 *Как начать:*\n"
-        "• Нажми «🔍 Найти собеседника»\n"
-        "• Ожидай подключения\n"
-        "• Общайся анонимно\n\n"
-        "🔹 *Во время чата:*\n"
-        "• 🔥 Предложить контакт — отправить свой username\n"
-        "• ⚠️ Пожаловаться — на нарушителя\n\n"
-        "🔹 *Проблемы:*\n"
-        "• Нажми «📞 Поддержка» — напишешь администратору\n\n"
+        "❓ *Помощь*\n\n"
+        "• «🔍 Найти собеседника» — начать поиск\n"
+        "• «🚪 Завершить чат» — выйти из диалога\n"
+        "• «📞 Поддержка» — написать администратору\n\n"
         "📌 *Правила:*\n"
-        "• Запрещены оскорбления и 18+\n"
+        "• Запрещены оскорбления\n"
         "• После 3 жалоб — блокировка"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 async def contact_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Связь с администратором - простой режим"""
     user_id = str(update.effective_user.id)
+    user_name = update.effective_user.first_name
     
-    if user_id in ACTIVE_CHATS:
-        await update.message.reply_text(
-            "❌ Вы сейчас в чате с собеседником.\n"
-            "Сначала завершите чат (🚪 Завершить чат).",
-            reply_markup=get_main_keyboard()
-        )
-        return
+    # Просто отправляем сообщение админу с кнопкой
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Ответить", callback_data=f"reply_to_{user_id}")]
+    ])
     
-    ADMIN_REPLY_BUFFER[user_id] = True
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"📞 *ЗАПРОС ПОДДЕРЖКИ*\n\n"
+             f"Пользователь: {user_name}\n"
+             f"ID: `{user_id}`\n\n"
+             f"Напишите ответ и нажмите кнопку ниже:",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
     
     await update.message.reply_text(
-        "📞 *Связь с поддержкой*\n\n"
-        "Напишите ваше сообщение. Администратор ответит в этот же чат.\n\n"
-        "✏️ *Введите ваше сообщение:*",
+        "📞 *Сообщение отправлено администратору!*\n\n"
+        "Ответ придёт в этот чат в течение нескольких минут.",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard()
     )
@@ -213,49 +205,7 @@ async def contact_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
-    # Режим поддержки
-    if user_id in ADMIN_REPLY_BUFFER:
-        text = update.message.text
-        if not text:
-            return
-        
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"📞 *ПОДДЕРЖКА*\n\n"
-                 f"👤 {update.effective_user.first_name}\n"
-                 f"🆔 ID: `{user_id}`\n"
-                 f"📝 {text}",
-            parse_mode="Markdown"
-        )
-        
-        del ADMIN_REPLY_BUFFER[user_id]
-        
-        await update.message.reply_text(
-            "✅ *Сообщение отправлено!*\n\nАдминистратор ответит сюда.",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard()
-        )
-        return
-    
-    # Ответ админа
-    if user_id == str(ADMIN_ID) and update.message.reply_to_message:
-        reply_text = update.message.text
-        original = update.message.reply_to_message
-        
-        if original and "ID:" in original.text:
-            match = re.search(r"ID: `(\d+)`", original.text)
-            if match:
-                target_id = match.group(1)
-                await context.bot.send_message(
-                    chat_id=int(target_id),
-                    text=f"📞 *Ответ поддержки:*\n\n{reply_text}",
-                    parse_mode="Markdown",
-                    reply_markup=get_main_keyboard()
-                )
-                await update.message.reply_text(f"✅ Ответ отправлен.")
-                return
-    
-    # Активный чат
+    # Если пользователь в активном чате
     if user_id in ACTIVE_CHATS:
         partner_id = ACTIVE_CHATS[user_id]
         
@@ -277,11 +227,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=int(partner_id),
                 sticker=update.message.sticker.file_id
             )
-    else:
-        await update.message.reply_text(
-            "🤫 Нажмите «🔍 Найти собеседника» чтобы начать общение.",
-            reply_markup=get_main_keyboard()
-        )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -289,6 +234,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     data = query.data
     
+    # Ответ админа на запрос поддержки
+    if data.startswith("reply_to_"):
+        target_id = data.split("_")[2]
+        context.user_data["reply_target"] = target_id
+        await query.edit_message_text(
+            text=query.message.text + "\n\n✏️ *Теперь напишите ваш ответ:*",
+            parse_mode="Markdown"
+        )
+        await query.message.reply_text("Введите текст ответа:")
+        return
+    
+    # Предложение контакта
     if data == "request_contact":
         if user_id not in ACTIVE_CHATS:
             await query.edit_message_text("❌ Вы не в чате.")
@@ -301,14 +258,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=int(partner_id),
                 text=f"🔥 *Собеседник хочет поделиться контактом!*\n\n"
-                     f"👤 @{username}\n\n"
-                     f"Можете написать ему в личные сообщения.",
+                     f"👤 @{username}",
                 parse_mode="Markdown"
             )
-            await query.edit_message_text("✅ Username отправлен собеседнику.")
+            await query.edit_message_text("✅ Username отправлен.")
         else:
-            await query.edit_message_text("❌ У вас нет username.\nУстановите его в настройках Telegram.")
+            await query.edit_message_text("❌ Установите username в настройках Telegram.")
     
+    # Жалоба
     elif data == "report_start":
         if user_id not in ACTIVE_CHATS:
             await query.edit_message_text("❌ Вы не в чате.")
@@ -321,11 +278,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔞 18+", callback_data=f"report_adult_{partner_id}")],
             [InlineKeyboardButton("❌ Отмена", callback_data="cancel_report")]
         ])
-        await query.edit_message_text(
-            "⚠️ *Выберите причину жалобы:*",
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
+        await query.edit_message_text("⚠️ *Причина жалобы:*", reply_markup=keyboard, parse_mode="Markdown")
     
     elif data.startswith("report_"):
         parts = data.split("_")
@@ -335,7 +288,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reason_text = {
                 "insult": "Оскорбления",
                 "spam": "Спам",
-                "adult": "18+ контент"
+                "adult": "18+"
             }.get(reason_key, "Другое")
             
             reports = load_reports()
@@ -347,19 +300,36 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             save_reports(reports)
             
-            await query.edit_message_text(
-                f"⚠️ *Жалоба отправлена!*\n\nПричина: {reason_text}\nСпасибо за помощь!",
-                parse_mode="Markdown"
-            )
+            await query.edit_message_text(f"⚠️ *Жалоба отправлена!*\nПричина: {reason_text}", parse_mode="Markdown")
     
     elif data == "cancel_report":
-        await query.edit_message_text("❌ Жалоба отменена.")
+        await query.edit_message_text("❌ Отменено.")
+
+# Обработка ответа админа на поддержку
+async def admin_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != str(ADMIN_ID):
+        return
+    
+    if "reply_target" in context.user_data:
+        target_id = context.user_data["reply_target"]
+        reply_text = update.message.text
+        
+        await context.bot.send_message(
+            chat_id=int(target_id),
+            text=f"📞 *Ответ поддержки:*\n\n{reply_text}\n\n━━━━━━━━━━━━━━━━━━━\n_Чтобы написать снова — нажмите «Поддержка»_",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+        
+        await update.message.reply_text(f"✅ Ответ отправлен пользователю {target_id}")
+        del context.user_data["reply_target"]
 
 def main():
     app = Application.builder().token(TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_reply_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
